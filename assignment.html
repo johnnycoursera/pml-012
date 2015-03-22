@@ -286,22 +286,6 @@ table(prediction, testingData$classe)</code></pre>
 ##          D    0    0    0  637    0
 ##          E    0    0    0    0  721</code></pre>
 </div>
-<div id="generating-test-results" class="section level1">
-<h1>Generating Test Results</h1>
-<pre class="r"><code>testing           &lt;- read.table(&quot;/tmp/pml-testing.csv&quot;, sep=&quot;,&quot;, header=T, quote=&quot;\&quot;&quot;, na.strings=c(&quot;NA&quot;, &quot;#DIV/0!&quot;, &quot;\&quot;\&quot;&quot;))
-testingPrediction &lt;- predict(trainedForestModel, testing)
-
-pml_write_files &lt;- function(x){
-  n = length(x)
-  for(i in 1:n){
-    filename = paste0(&quot;/tmp/submission/problem_id_&quot;,i,&quot;.txt&quot;)
-    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
-  }
-}
-
-pml_write_files(testingPrediction)</code></pre>
-</div>
-
 
 </div>
 

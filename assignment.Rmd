@@ -1,0 +1,255 @@
+---
+title: "PML Assignment"
+author: "Johnny Course"
+date: "22/03/2015"
+output:
+  html_document:
+    theme: cosmo
+---
+```{r}
+set.seed(123)
+library(caret)
+library(tree)
+library(rattle)
+library(randomForest)
+```
+
+Introduction
+============
+
+We will build a predictive model to determine wheterh or not a specific form of exercise is done correctly using only data obtained from various accelerometers.
+
+Data sources
+============
+
+The data was downloaded from,
+
+ - https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+ - https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+And was originally sourced from http://groupware.les.inf.puc-rio.br/har
+
+```{r, cache=TRUE}
+dataTraining <- read.csv("/tmp/pml-training.csv")
+dataTesting  <- read.csv("/tmp/pml-testing.csv")
+c(
+  dim(dataTraining),                # rows, columns
+  sum(complete.cases(dataTraining)) # complete rows
+  )
+```
+Only 406 out of 19633 cases are *complete* - that makes the raw dataset almost unworkable without special measures. 
+
+Selection and preparation
+=========================
+
+Many of the variables are also derived (min, max, avg, etc) or irrelevant ones. We filter these out and create a list of raw measurements for the inputs.
+
+```{r}
+inputs <- c(
+"accel_arm_x",
+"accel_arm_y",
+"accel_arm_z",
+"accel_belt_x",
+"accel_belt_y",
+"accel_belt_z",
+"accel_dumbbell_x",
+"accel_dumbbell_y",
+"accel_dumbbell_z",
+"accel_forearm_x",
+"accel_forearm_y",
+"accel_forearm_z",
+"gyros_arm_x",
+"gyros_arm_y",
+"gyros_arm_z",
+"gyros_belt_x",
+"gyros_belt_y",
+"gyros_belt_z",
+"gyros_dumbbell_x",
+"gyros_dumbbell_y",
+"gyros_dumbbell_z",
+"gyros_forearm_x",
+"gyros_forearm_y",
+"gyros_forearm_z",
+"magnet_arm_x",
+"magnet_arm_y",
+"magnet_arm_z",
+"magnet_belt_x",
+"magnet_belt_y",
+"magnet_belt_z",
+"magnet_dumbbell_x",
+"magnet_dumbbell_y",
+"magnet_dumbbell_z",
+"magnet_forearm_x",
+"magnet_forearm_y",
+"magnet_forearm_z",
+"pitch_arm",
+"pitch_belt",
+"pitch_dumbbell",
+"pitch_forearm",
+"roll_arm",
+"roll_belt",
+"roll_dumbbell",
+"roll_forearm",
+"total_accel_arm",
+"total_accel_belt",
+"total_accel_dumbbell",
+"total_accel_forearm",
+"yaw_arm",
+"yaw_belt",
+"yaw_dumbbell",
+"yaw_forearm"
+)
+```
+
+
+We add the 'classe' classification field and subset the data accordingly
+
+```{r}
+selectedDataTraining <- dataTraining[,c(inputs, "classe")]
+c(
+  dim(selectedDataTraining),                # rows, columns
+  sum(complete.cases(selectedDataTraining)) # complete rows
+  )
+```
+
+This gives us 19622 cases, all of which are complete and that makes this a viable dataset.
+
+To perform initial correlation analysis we require numeric values, which classe is not. We will create a subset of selectedTrainingData that holds only numeric values, analyze it for strongly correlated variables and visualize these with a heatmap.
+
+```{r, cache=TRUE}
+numericSelectedDataTraining <- selectedDataTraining[,names(selectedDataTraining) != "classe"]
+correlationsTraining        <- cor(numericSelectedDataTraining)
+```
+
+```{r, fig.width=9, fig.height=8}
+heatmap(correlationsTraining)
+```
+
+The heatmap does not appear to show many strong correlations. To identify the ones that are strongly correlated (and not with themselves) we we select all 90%+ values,
+
+```{r}
+cutoff <- .9
+highCorrelations <- correlationsTraining[
+  (correlationsTraining < -cutoff | correlationsTraining > cutoff) & correlationsTraining != 1.0
+  ]
+highCorrelations
+```
+
+We will remove these from the dataset before continuing
+
+```{r}
+excessValues         <- findCorrelation(correlationsTraining, cutoff = cutoff)
+filteredDataTraining <- selectedDataTraining[-excessValues]
+
+dim(filteredDataTraining)
+```
+
+We partition this filtered data to create our local training and testing sets
+
+```{r}
+trainingPartition <- createDataPartition(
+  y=filteredDataTraining$classe,
+  p=.8,
+  list=F
+  )
+finalTraining <- filteredDataTraining[trainingPartition, ]
+finalTesting  <- filteredDataTraining[-trainingPartition, ]
+```
+
+
+Analysis
+========
+
+Now that we have prepared a workable dataset we can fit a regression tree using binary recursive partitioning.
+
+```{r, cache=TRUE}
+trainingTree <- tree(
+  data=finalTraining,
+  method="recursive.partition",
+  classe~.
+  )
+
+summary(trainingTree)
+```
+
+```{r, cache=TRUE}
+trainedModel <- train(
+  classe ~ .,
+  data=finalTraining,
+  method="rpart"
+  )
+```
+
+```{r, fig.height=9, fig.width=9, cache=TRUE}
+fancyRpartPlot(
+  trainedModel$finalModel,
+  main="Final model",
+  sub=""
+  )
+```
+
+Accuracy for this model is,
+```{r, cache=TRUE}
+max(trainedModel$results$Accuracy) * 100
+```
+
+
+The accuracy for this model is pretty dismal at 52% meaning its predictive capability is only marginally better than flipping a coin. We will use a different approach with Random Forests.
+
+```{r, cache=TRUE}
+controlModel <- trainControl(
+  method="cv",
+  number=4
+  )
+```
+```{r, cache=TRUE}
+trainedForestModel <- train(
+  classe~.,
+  data=finalTraining,
+  method="rf", # random forest as opposed to rpart 
+  trControl=controlModel
+  )
+```
+
+Summary
+```{r, cache=TRUE}
+trainedForestModel
+```
+Accuracy for this model is,
+```{r, cache=TRUE}
+max(trainedForestModel$results$Accuracy) * 100
+```
+
+This model gives us a huge increase in accuracy at 99.1%.
+
+Cross-validation
+================
+
+We will now use this model to make predictions against the data we partitioned out for testing,
+```{r, cache=TRUE}
+testingData <- finalTesting # making a minor modification to add the prediction results
+
+prediction <- predict(trainedForestModel, testingData)
+testingData$correct <- prediction == testingData$classe
+table(prediction, testingData$classe)
+```
+
+
+
+
+Generating Test Results
+=======================
+```{r}
+testing           <- read.table("/tmp/pml-testing.csv", sep=",", header=T, quote="\"", na.strings=c("NA", "#DIV/0!", "\"\""))
+testingPrediction <- predict(trainedForestModel, testing)
+
+pml_write_files <- function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("/tmp/submission/problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(testingPrediction)
+```
